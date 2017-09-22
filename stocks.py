@@ -4,15 +4,10 @@ import pandas
 import csv
 from io import StringIO
 import time
-import smtplib
-import email
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 import datetime
+import email_sendgrid
+import email_smtp
 
-# Key to use with alpha advantage APIs
-# https://www.alphavantage.co
-#ALPHA_ADVANTAGE_KEY        = "1MSRHLCXX7ALMCQI"
 
 # Yahoo finance API
 YAHOO_FINANCE_API          = "http://finance.yahoo.com/d/quotes.csv"
@@ -42,11 +37,9 @@ EMAILS_FILE = "emails.csv"
 # Return list of top N values
 TOP_N = 100
 
-# SMTP Email connection information
-SMTP_SERVER_AND_PORT = 'smtp.live.com:587'
-SMTP_USERNAME = 'youremail@hotmail.com'
-SMTP_PASSWORD = 'yourpassword'
-FROM_EMAIL = 'youremail@hotmail.com'
+# Email information
+FROM_EMAIL = 'youremailaddress@emai.com'
+
 
 
 def read_stock_list():
@@ -54,6 +47,7 @@ def read_stock_list():
     Reads the list of stocks and returns a dictionary object.
     :return: a dictionary object of all the stocks where the key is the symbol
     """
+    print("Reading list of stocks.")
     stocks = {}
     with open(STOCKS_FILE) as csvfile:
         reader = csv.DictReader(csvfile)
@@ -68,6 +62,7 @@ def get_52_week_high_low_for_stocks(stocks):
     :param stocks:
     :return:
     """
+    print("Fetching stock quotes.")
     # Build a full list of symbols
     symbols = []
     for key in stocks.keys():
@@ -81,6 +76,7 @@ def get_52_week_high_low_for_stocks(stocks):
 
     # Get quotes for all the stocks in batches
     for i in range(0, num_of_batches):
+        print("Fetching quotes in batch: " + str(i+1) + "/" + str(num_of_batches))
         start = i*BATCH_SIZE
         end = start + BATCH_SIZE
         batch_symbols = symbols[start: end]
@@ -102,6 +98,7 @@ def get_52_week_high_low_for_stocks(stocks):
 
 
     # Assign columns
+    print("Stock quotes have been fetched. Beginning analysis...")
     all_stocks_df.columns=['symbol', 'ask', 'bid', 'close', '52w-low', '52w-high', '52w-low-change', '52w-high-change', 'div-iteryield']
 
     # Add the percent change columns
@@ -120,41 +117,29 @@ def get_52_week_high_low_for_stocks(stocks):
     sorted_values = all_stocks_df.sort_values('52w-%-low-change')
 
     # Done
+    print("Analysis completed.")
     return sorted_values
 
 
 def email_report(pd_dataframe):
     emails = {}
-    to = []
+    print("Emailing result of analysis.")
     with open(EMAILS_FILE) as csvfile:
         reader = csv.DictReader(csvfile)
         for row in reader:
             emails[row['Name']] = row['Email']
-            to.append(row['Email'])
-
-    server = smtplib.SMTP(SMTP_SERVER_AND_PORT)
-    server.ehlo()
-    server.starttls()
-    server.login(SMTP_USERNAME, SMTP_PASSWORD)
 
     dt = str(datetime.datetime.now())
+    subject = dt + " - 52-week low/high S&P500 stock quote"
 
-    msg = MIMEMultipart('alternative')
-    msg['Subject'] = dt + " - 52-week low/high S&P500 stock quote"
-    msg['From'] = FROM_EMAIL
-    msg['To'] = ','.join(to)
+    text_msg = '52-week low/high S&P500 stock quotes for ' + dt
+    html_msg = '<html><head></head><body>' + str(pd_dataframe.head(TOP_N).to_html(index=False)) + '</body></html>'
 
-    text = '52-week low/high S&P500 stock quotes for ' + dt
-    html = '<html><head></head><body>' + str(pd_dataframe.head(TOP_N).to_html(index=False)) + '</body></html>'
-
-    text_part = MIMEText(text, 'plain')
-    html_part = MIMEText(html, 'html')
-
-    msg.attach(text_part)
-    msg.attach(html_part)
-
-    server.send_message(msg, FROM_EMAIL, to)
-    server.quit()
+    for to_name in emails.keys():
+        if email_sendgrid.send_email(emails[to_name], to_name, FROM_EMAIL, subject, text_msg, html_msg) == False:
+            print("Error: Failed to send email to : " + to_name + "(" + emails[to_name] + ").")
+        else:
+            print("Report email to : " + to_name + "(" + emails[to_name] + ").")
 
 
 def main():
